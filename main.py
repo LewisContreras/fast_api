@@ -1,10 +1,22 @@
 from typing import Optional, List
-from urllib import response
-from fastapi import FastAPI, Path, Query
+from fastapi import FastAPI, Path, Query, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from jwt_manager import create_token, validate_token
+from fastapi.security import HTTPBearer
 
 app = FastAPI()
+
+class JWTBearer(HTTPBearer):
+    async def __call__(self, request: Request):
+        auth = await super().__call__(request)
+        data = validate_token(auth.credentials)
+        if data['email'] != "admin@example.com":
+            raise HTTPException(status_code=403, detail="Invalid credentials")
+
+class User(BaseModel):
+    email: str
+    password: str
 
 class Movie(BaseModel):
     id: Optional[int] = None
@@ -52,9 +64,16 @@ app.version = "0.0.1"
 def message():
     return HTMLResponse("<h1>Hello, World!</h1>")
 
-@app.get("/movies", tags=["movies"], response_model=List[Movie])
+@app.get("/movies", tags=["movies"], response_model=List[Movie], status_code=200, dependencies=[Depends(JWTBearer())])
 def get_movies() -> List[Movie]:
-    return JSONResponse(content=movies)
+    return JSONResponse(content=movies, status_code=200)
+
+@app.post("/login", tags=["auth"])
+def login(user: User):
+    if user.email == "admin@example.com" and user.password == "admin":
+        token = create_token(user.dict())
+        return JSONResponse(content=token, status_code=200)
+    return JSONResponse(content={"error": "Invalid credentials"}, status_code=401)
 
 @app.get("/movies/{movie_id}", tags=["movies"], response_model=Movie)
 def get_movie(movie_id: int = Path(ge=1, le=2000)) -> Movie:
@@ -68,12 +87,12 @@ def get_movies_by_category(category: str = Query(min_length=5, max_length=15)) -
     data = [ movie for movie in movies if movie["category"] == category ]
     return JSONResponse(content=data)
 
-@app.post("/movies", tags=["movies"], response_model=dict)
+@app.post("/movies", tags=["movies"], response_model=dict, status_code=201)
 def create_movie(movie: Movie) -> dict:
     movies.append(movie.model_dump())
-    return JSONResponse(content={"message": "Movie created"})
+    return JSONResponse(content={"message": "Movie created"}, status_code=201)
 
-@app.put("/movies/{id}", tags=["movies"], response_model=dict)
+@app.put("/movies/{id}", tags=["movies"], response_model=dict, status_code=200)
 def update_movie(id: int, movie: Movie) -> dict:
     for item in movies:
         if item["id"] == id:
@@ -82,13 +101,13 @@ def update_movie(id: int, movie: Movie) -> dict:
             item["year"] = movie.year
             item["rating"] = movie.rating
             item["category"] = movie.category
-            return JSONResponse(content={"message": "Movie updated"})
-    return {"error": "Movie not found"}
+            return JSONResponse(content={"message": "Movie updated"}, status_code=200)
+    return JSONResponse(content={"error": "Movie not found"}, status_code=404)
 
-@app.delete("/movies/{id}", tags=["movies"], response_model=dict)   
+@app.delete("/movies/{id}", tags=["movies"], response_model=dict, status_code=200) 
 def delete_movie(id: int) -> dict:
     for movie in movies:
         if movie["id"] == id:
             movies.remove(movie)
-            return JSONResponse(content={"message": "Movie deleted"})
-    return {"error": "Movie not found"}
+            return JSONResponse(content={"message": "Movie deleted"}, status_code=200)
+    return JSONResponse(content={"error": "Movie not found"}, status_code=404)
